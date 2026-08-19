@@ -1,5 +1,4 @@
-import { type ReactNode, useEffect, useMemo, useState } from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ArrowDown,
   ArrowLeft,
@@ -16,8 +15,6 @@ import {
   X,
 } from 'lucide-react';
 import { ErrorBoundary } from '@/components/error-boundary';
-import { Toaster } from '@/components/ui/toaster';
-import { TooltipProvider } from '@/components/ui/tooltip';
 import {
   calculateRoute,
   INITIAL_FEE_MATRIX,
@@ -30,11 +27,6 @@ import {
   type Prefecture,
   type Region,
 } from '@/data/prefecture-master';
-import NotFound from '@/pages/not-found';
-import { Route, Switch, useLocation, Router as WouterRouter } from 'wouter';
-
-const queryClient = new QueryClient();
-
 const REGION_COLORS: Record<Region, string> = {
   北海道: 'bg-sky-100 text-sky-800',
   本州: 'bg-amber-100 text-amber-900',
@@ -504,16 +496,36 @@ function FeeMasterPanel({
   );
 }
 
+function loadFeeMatrix(): FeeMatrix {
+  try {
+    const saved = window.localStorage.getItem('prefecture-fee-matrix');
+    const parsed = saved ? (JSON.parse(saved) as Partial<FeeMatrix>) : {};
+
+    return REGIONS.reduce(
+      (matrix, departure) => ({
+        ...matrix,
+        [departure]: REGIONS.reduce(
+          (row, arrival) => ({
+            ...row,
+            [arrival]:
+              parsed[departure]?.[arrival] === null ||
+              typeof parsed[departure]?.[arrival] === 'number'
+                ? parsed[departure][arrival]
+                : INITIAL_FEE_MATRIX[departure][arrival],
+          }),
+          {} as Record<Region, Fee>,
+        ),
+      }),
+      {} as FeeMatrix,
+    );
+  } catch {
+    return INITIAL_FEE_MATRIX;
+  }
+}
+
 function Home() {
   const [view, setView] = useState<'calculator' | 'master'>('calculator');
-  const [feeMatrix, setFeeMatrix] = useState<FeeMatrix>(() => {
-    try {
-      const saved = window.localStorage.getItem('prefecture-fee-matrix');
-      return saved ? (JSON.parse(saved) as FeeMatrix) : INITIAL_FEE_MATRIX;
-    } catch {
-      return INITIAL_FEE_MATRIX;
-    }
-  });
+  const [feeMatrix, setFeeMatrix] = useState<FeeMatrix>(loadFeeMatrix);
   const [feeHistory, setFeeHistory] = useState<FeeChange[]>(() => {
     try {
       const saved = window.localStorage.getItem('prefecture-fee-history');
@@ -749,32 +761,11 @@ function Home() {
   );
 }
 
-function Router() {
-  return (
-    <RoutedErrorBoundary>
-      <Switch>
-        <Route path="/" component={Home} />
-        <Route component={NotFound} />
-      </Switch>
-    </RoutedErrorBoundary>
-  );
-}
-
-function RoutedErrorBoundary({ children }: { children: ReactNode }) {
-  const [location] = useLocation();
-  return <ErrorBoundary resetKey={location}>{children}</ErrorBoundary>;
-}
-
 function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
-          <Router />
-        </WouterRouter>
-        <Toaster />
-      </TooltipProvider>
-    </QueryClientProvider>
+    <ErrorBoundary>
+      <Home />
+    </ErrorBoundary>
   );
 }
 
