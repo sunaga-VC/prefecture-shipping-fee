@@ -335,9 +335,6 @@ function Home() {
           <h1 className="max-w-[780px] text-[clamp(2.5rem,6vw,5.25rem)] font-extrabold leading-[.98] tracking-[-0.075em] text-[hsl(var(--primary))]">
             迷わず、<span className="text-[hsl(var(--accent))]">運賃</span>を。
           </h1>
-          <p className="mt-5 max-w-[540px] text-[15px] font-medium leading-[1.85] text-[hsl(var(--muted-foreground))] sm:text-base">
-            発送元と届け先を選ぶだけ。エリア区分と料金を、現場で確認しやすい形に整えました。
-          </p>
         </section>
 
         <div className="grid items-stretch gap-5 lg:grid-cols-[1.08fr_.92fr] lg:gap-6">
