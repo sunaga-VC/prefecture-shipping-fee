@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "都道府県移動料金システム"
+description = "出発地と到着地の都道府県をサジェストから選択すると、地域区分と移動料金を自動判定するレスポンシブWebアプリです。都道府県・地域・料金はマスタとして分離されています。"
+version = "1.0.0"
+id = "artifacts/prefecture-shipping-fee"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 24019
+
+[services.development]
+run = "pnpm --filter @workspace/prefecture-shipping-fee run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/prefecture-shipping-fee", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/prefecture-shipping-fee/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "24019"
+BASE_PATH = "/"
