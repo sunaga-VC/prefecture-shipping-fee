@@ -1,15 +1,18 @@
-import { type ReactNode, useMemo, useState } from 'react';
+import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
   ArrowDown,
+  ArrowLeft,
   Check,
   ChevronDown,
   CircleHelp,
   ClipboardCheck,
   Eraser,
   MapPin,
+  Pencil,
   Search,
   ShieldCheck,
+  SlidersHorizontal,
   X,
 } from 'lucide-react';
 import { ErrorBoundary } from '@/components/error-boundary';
@@ -17,8 +20,13 @@ import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import {
   calculateRoute,
+  INITIAL_FEE_MATRIX,
   PREFECTURES,
+  REGIONS,
   searchPrefectures,
+  type Fee,
+  type FeeChange,
+  type FeeMatrix,
   type Prefecture,
   type Region,
 } from '@/data/prefecture-master';
@@ -218,7 +226,7 @@ function ResultPanel({
             </div>
             <div className="flex items-end justify-between gap-3">
               <div>
-                {result.fee ? (
+                {result.fee !== null ? (
                   <>
                     <p className="font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-[hsl(var(--accent))]">
                       適用料金
@@ -285,10 +293,59 @@ function ResultPanel({
 }
 
 function Home() {
+  const [view, setView] = useState<'calculator' | 'master'>('calculator');
+  const [feeMatrix, setFeeMatrix] = useState<FeeMatrix>(() => {
+    try {
+      const saved = window.localStorage.getItem('prefecture-fee-matrix');
+      return saved ? (JSON.parse(saved) as FeeMatrix) : INITIAL_FEE_MATRIX;
+    } catch {
+      return INITIAL_FEE_MATRIX;
+    }
+  });
+  const [feeHistory, setFeeHistory] = useState<FeeChange[]>(() => {
+    try {
+      const saved = window.localStorage.getItem('prefecture-fee-history');
+      return saved ? (JSON.parse(saved) as FeeChange[]) : [];
+    } catch {
+      return [];
+    }
+  });
   const [departure, setDeparture] = useState<Prefecture | null>(null);
   const [arrival, setArrival] = useState<Prefecture | null>(null);
   const [departureQuery, setDepartureQuery] = useState('');
   const [arrivalQuery, setArrivalQuery] = useState('');
+
+  useEffect(() => {
+    window.localStorage.setItem('prefecture-fee-matrix', JSON.stringify(feeMatrix));
+  }, [feeMatrix]);
+
+  useEffect(() => {
+    window.localStorage.setItem('prefecture-fee-history', JSON.stringify(feeHistory));
+  }, [feeHistory]);
+
+  const updateFee = (departureRegion: Region, arrivalRegion: Region, nextFee: Fee) => {
+    const previousFee = feeMatrix[departureRegion][arrivalRegion];
+    if (previousFee === nextFee) return;
+
+    setFeeMatrix((current) => ({
+      ...current,
+      [departureRegion]: {
+        ...current[departureRegion],
+        [arrivalRegion]: nextFee,
+      },
+    }));
+    setFeeHistory((current) => [
+      {
+        id: `${Date.now()}-${departureRegion}-${arrivalRegion}`,
+        departure: departureRegion,
+        arrival: arrivalRegion,
+        previousFee,
+        nextFee,
+        changedAt: new Date().toISOString(),
+      },
+      ...current,
+    ]);
+  };
 
   const clearRoute = () => {
     setDeparture(null);
@@ -314,17 +371,39 @@ function Home() {
               </p>
             </div>
           </div>
-          <div className="hidden items-center gap-2.5 text-xs font-semibold text-[hsl(var(--muted-foreground))] sm:flex">
+          <div className="flex items-center gap-2.5 text-xs font-semibold text-[hsl(var(--muted-foreground))]">
             <span className="h-2 w-2 rounded-full bg-[hsl(163_43%_38%)] soft-pulse" />
-            料金マスタ稼働中
-            <span className="ml-3 border-l border-[hsl(var(--border))] pl-4 font-mono text-[10px] tracking-wide">
-              LOCAL MASTER · 47
-            </span>
+            <span className="hidden sm:inline">料金マスタ稼働中</span>
+            <button
+              type="button"
+              onClick={() => setView(view === 'calculator' ? 'master' : 'calculator')}
+              className="ml-2 flex items-center gap-1.5 rounded-full border border-[hsl(var(--border))] px-3 py-2 text-xs font-bold transition-colors hover:border-[hsl(var(--accent))] hover:text-[hsl(var(--accent))]"
+            >
+              {view === 'calculator' ? (
+                <>
+                  <SlidersHorizontal className="h-3.5 w-3.5" />
+                  料金マスター
+                </>
+              ) : (
+                <>
+                  <ArrowLeft className="h-3.5 w-3.5" />
+                  判定画面へ
+                </>
+              )}
+            </button>
           </div>
         </div>
       </header>
 
       <div className="mx-auto max-w-[1240px] px-5 pb-12 pt-10 sm:px-8 sm:pt-14 lg:px-10 lg:pt-16">
+        {view === 'master' ? (
+          <FeeMasterPanel
+            feeMatrix={feeMatrix}
+            history={feeHistory}
+            onUpdateFee={updateFee}
+          />
+        ) : (
+          <>
         <section className="rise-in mb-10 max-w-3xl">
           <div className="mb-5 flex items-center gap-3">
             <span className="h-px w-8 bg-[hsl(var(--accent))]" />
@@ -410,7 +489,7 @@ function Home() {
           </section>
 
           <div className="rise-in rise-in-delay-2">
-            <ResultPanel departure={departure} arrival={arrival} />
+            <ResultPanel departure={departure} arrival={arrival} feeMatrix={feeMatrix} />
           </div>
         </div>
 
@@ -451,6 +530,8 @@ function Home() {
             </div>
           </div>
         </section>
+          </>
+        )}
       </div>
     </main>
   );

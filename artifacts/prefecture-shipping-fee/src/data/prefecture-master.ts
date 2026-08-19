@@ -56,13 +56,25 @@ export const PREFECTURES: Prefecture[] = [
   { name: '沖縄県', reading: 'おきなわ', region: '沖縄' },
 ];
 
-export type Fee = 5000 | 6000 | 7000;
+export const REGIONS: Region[] = ['北海道', '本州', '九州', '沖縄'];
 
-const FEE_MATRIX: Partial<Record<Region, Partial<Record<Region, Fee>>>> = {
-  北海道: { 北海道: 5000, 本州: 6000, 九州: 7000 },
+export type Fee = number | null;
+export type FeeMatrix = Record<Region, Record<Region, Fee>>;
+
+export type FeeChange = {
+  id: string;
+  departure: Region;
+  arrival: Region;
+  previousFee: Fee;
+  nextFee: Fee;
+  changedAt: string;
+};
+
+export const INITIAL_FEE_MATRIX: FeeMatrix = {
+  北海道: { 北海道: 5000, 本州: 6000, 九州: 7000, 沖縄: null },
   本州: { 北海道: 6000, 本州: 5000, 九州: 6000, 沖縄: 7000 },
   九州: { 北海道: 7000, 本州: 6000, 九州: 5000, 沖縄: 7000 },
-  沖縄: { 本州: 7000, 九州: 7000 },
+  沖縄: { 北海道: null, 本州: 7000, 九州: 7000, 沖縄: null },
 };
 
 export type RouteResult = {
@@ -94,8 +106,9 @@ export function searchPrefectures(query: string): Prefecture[] {
 export function calculateRoute(
   departure: Prefecture,
   arrival: Prefecture,
+  feeMatrix: FeeMatrix = INITIAL_FEE_MATRIX,
 ): RouteResult {
-  const fee = FEE_MATRIX[departure.region]?.[arrival.region] ?? null;
+  const fee = feeMatrix[departure.region][arrival.region];
   const category =
     departure.region === arrival.region
       ? `同一エリア・${departure.region}`
