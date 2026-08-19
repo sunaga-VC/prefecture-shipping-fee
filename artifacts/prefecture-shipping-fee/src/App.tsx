@@ -743,7 +743,7 @@ function Home() {
           <div className="flex items-center gap-3 text-right">
             <div>
               <p className="text-xs font-bold text-[hsl(var(--foreground))]">
-                国内47都道府県
+                登録43都道府県
               </p>
               <p className="mt-1 text-[11px] font-medium text-[hsl(var(--muted-foreground))]">
                 料金設定なしの区間も表示
