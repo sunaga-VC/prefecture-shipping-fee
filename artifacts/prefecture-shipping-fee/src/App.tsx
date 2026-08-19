@@ -191,12 +191,14 @@ function LocationField({
 function ResultPanel({
   departure,
   arrival,
+  feeMatrix,
 }: {
   departure: Prefecture | null;
   arrival: Prefecture | null;
+  feeMatrix: FeeMatrix;
 }) {
   const result =
-    departure && arrival ? calculateRoute(departure, arrival) : null;
+    departure && arrival ? calculateRoute(departure, arrival, feeMatrix) : null;
   const isEmpty = !departure && !arrival;
   const isPartial = (departure && !arrival) || (!departure && arrival);
 
@@ -289,6 +291,216 @@ function ResultPanel({
         )}
       </div>
     </section>
+  );
+}
+
+function formatFee(fee: Fee) {
+  return fee === null ? '未設定' : `${fee.toLocaleString('ja-JP')}円`;
+}
+
+function FeeMasterPanel({
+  feeMatrix,
+  history,
+  onUpdateFee,
+}: {
+  feeMatrix: FeeMatrix;
+  history: FeeChange[];
+  onUpdateFee: (departure: Region, arrival: Region, fee: Fee) => void;
+}) {
+  const [editing, setEditing] = useState<{ departure: Region; arrival: Region } | null>(null);
+  const [draftFee, setDraftFee] = useState('');
+  const [validationMessage, setValidationMessage] = useState('');
+
+  const openEditor = (departure: Region, arrival: Region) => {
+    const fee = feeMatrix[departure][arrival];
+    setEditing({ departure, arrival });
+    setDraftFee(fee === null ? '' : String(fee));
+    setValidationMessage('');
+  };
+
+  const saveDraft = () => {
+    if (!editing) return;
+    const normalized = draftFee.trim();
+    if (normalized !== '' && !/^\d+$/.test(normalized)) {
+      setValidationMessage('0以上の整数、または空欄で入力してください。');
+      return;
+    }
+    onUpdateFee(
+      editing.departure,
+      editing.arrival,
+      normalized === '' ? null : Number(normalized),
+    );
+    setEditing(null);
+    setDraftFee('');
+    setValidationMessage('');
+  };
+
+  return (
+    <div className="rise-in">
+      <section className="mb-7 max-w-3xl">
+        <div className="mb-5 flex items-center gap-3">
+          <span className="h-px w-8 bg-[hsl(var(--accent))]" />
+          <span className="font-mono text-[10px] font-medium uppercase tracking-[0.22em] text-[hsl(var(--accent))]">
+            fee master / 16 patterns
+          </span>
+        </div>
+        <h1 className="text-[clamp(2.2rem,5vw,4.8rem)] font-extrabold leading-none tracking-[-0.07em] text-[hsl(var(--primary))]">
+          料金マスター
+        </h1>
+        <p className="mt-4 max-w-2xl text-sm font-medium leading-7 text-[hsl(var(--muted-foreground))]">
+          固定4地域の出発・到着16パターンを管理します。セルを選択して金額を変更すると、判定画面にもすぐ反映されます。
+        </p>
+      </section>
+
+      <div className="grid gap-6 xl:grid-cols-[1fr_300px]">
+        <section className="overflow-hidden rounded-[1.15rem] border border-[hsl(var(--card-border))] bg-[hsl(var(--card)/.88)] p-4 shadow-[0_12px_30px_hsl(220_34%_17%/.05)] sm:p-6">
+          <div className="mb-5 flex items-center justify-between gap-3">
+            <div>
+              <p className="font-mono text-[10px] font-medium uppercase tracking-[0.2em] text-[hsl(var(--muted-foreground))]">
+                Matrix / 4 × 4
+              </p>
+              <h2 className="mt-2 text-xl font-extrabold tracking-tight">出発地域 × 到着地域</h2>
+            </div>
+            <span className="rounded-full bg-[hsl(var(--secondary))] px-3 py-1.5 text-xs font-bold text-[hsl(var(--muted-foreground))]">
+              クリックして編集
+            </span>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[680px] border-separate border-spacing-1.5 text-left">
+              <thead>
+                <tr>
+                  <th className="w-[22%] px-3 py-2 text-[10px] font-bold uppercase tracking-[0.18em] text-[hsl(var(--muted-foreground))]">
+                    出発＼到着
+                  </th>
+                  {REGIONS.map((region) => (
+                    <th
+                      key={region}
+                      className={`rounded-lg px-3 py-3 text-center text-xs font-extrabold ${REGION_COLORS[region]}`}
+                    >
+                      {region}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {REGIONS.map((departure) => (
+                  <tr key={departure}>
+                    <th className={`rounded-lg px-3 py-4 text-sm font-extrabold ${REGION_COLORS[departure]}`}>
+                      {departure}
+                    </th>
+                    {REGIONS.map((arrival) => {
+                      const fee = feeMatrix[departure][arrival];
+                      return (
+                        <td key={`${departure}-${arrival}`}>
+                          <button
+                            type="button"
+                            onClick={() => openEditor(departure, arrival)}
+                            className={`group flex min-h-[72px] w-full items-center justify-between gap-2 rounded-lg border px-3 py-3 text-left transition-all hover:-translate-y-0.5 hover:border-[hsl(var(--accent))] hover:shadow-[0_8px_18px_hsl(var(--accent)/.12)] ${
+                              fee === null
+                                ? 'border-dashed border-[hsl(var(--border))] bg-[hsl(var(--background)/.5)]'
+                                : 'border-[hsl(var(--card-border))] bg-[hsl(var(--card))]'
+                            }`}
+                          >
+                            <span className={`text-sm font-extrabold ${fee === null ? 'text-[hsl(var(--muted-foreground))]' : 'text-[hsl(var(--foreground))]'}`}>
+                              {formatFee(fee)}
+                            </span>
+                            <Pencil className="h-3.5 w-3.5 shrink-0 text-[hsl(var(--muted-foreground))] opacity-0 transition-opacity group-hover:opacity-100" />
+                          </button>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-4 text-xs font-medium text-[hsl(var(--muted-foreground))]">
+            未設定のセルは空欄で保存できます。0円も有効な料金として登録できます。
+          </p>
+        </section>
+
+        <section className="rounded-[1.15rem] border border-[hsl(var(--card-border))] bg-[hsl(var(--primary))] p-5 text-[hsl(var(--primary-foreground))] shadow-[0_16px_40px_hsl(220_34%_17%/.13)] sm:p-6">
+          <div className="flex items-center gap-2">
+            <span className="rounded-full bg-[hsl(var(--accent)/.16)] p-2 text-[hsl(var(--accent))]">
+              <ShieldCheck className="h-4 w-4" />
+            </span>
+            <div>
+              <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-[hsl(var(--primary-foreground)/.55)]">
+                Change log
+              </p>
+              <h2 className="mt-1 text-lg font-extrabold">変更履歴</h2>
+            </div>
+          </div>
+          {history.length > 0 ? (
+            <div className="mt-6 space-y-4">
+              {history.slice(0, 8).map((change) => (
+                <div key={change.id} className="border-b border-[hsl(var(--primary-foreground)/.12)] pb-4 last:border-0">
+                  <p className="text-xs font-bold">
+                    {change.departure} → {change.arrival}
+                  </p>
+                  <p className="mt-1 text-sm font-extrabold text-[hsl(var(--accent))]">
+                    {formatFee(change.previousFee)} <span className="px-1 text-[hsl(var(--primary-foreground)/.45)]">→</span> {formatFee(change.nextFee)}
+                  </p>
+                  <p className="mt-1 font-mono text-[10px] text-[hsl(var(--primary-foreground)/.48)]">
+                    {new Date(change.changedAt).toLocaleString('ja-JP')}
+                  </p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="mt-8 rounded-lg border border-dashed border-[hsl(var(--primary-foreground)/.18)] p-4 text-sm leading-6 text-[hsl(var(--primary-foreground)/.58)]">
+              料金変更を保存すると、ここに履歴が残ります。
+            </div>
+          )}
+        </section>
+      </div>
+
+      {editing && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-[hsl(220_34%_17%/.45)] p-5 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-[1.15rem] border border-[hsl(var(--card-border))] bg-[hsl(var(--card))] p-6 shadow-[0_24px_70px_hsl(220_34%_17%/.24)]">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="font-mono text-[10px] font-medium uppercase tracking-[0.18em] text-[hsl(var(--accent))]">
+                  Edit fee
+                </p>
+                <h2 className="mt-2 text-xl font-extrabold">
+                  {editing.departure} → {editing.arrival}
+                </h2>
+              </div>
+              <button type="button" onClick={() => setEditing(null)} className="rounded-full p-2 text-[hsl(var(--muted-foreground))] hover:bg-[hsl(var(--secondary))]">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <label className="mt-7 block text-sm font-bold" htmlFor="fee-input">
+              金額（円）
+            </label>
+            <div className="mt-2 flex items-center gap-3 rounded-lg border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-4 py-3 focus-within:border-[hsl(var(--accent))]">
+              <input
+                id="fee-input"
+                type="number"
+                min="0"
+                step="1"
+                value={draftFee}
+                onChange={(event) => setDraftFee(event.target.value)}
+                placeholder="未設定にする場合は空欄"
+                className="min-w-0 flex-1 bg-transparent text-lg font-extrabold outline-none"
+              />
+              <span className="text-sm font-bold text-[hsl(var(--muted-foreground))]">円</span>
+            </div>
+            {validationMessage && <p className="mt-2 text-xs font-bold text-red-600">{validationMessage}</p>}
+            <div className="mt-7 flex justify-end gap-2">
+              <button type="button" onClick={() => setEditing(null)} className="rounded-full border border-[hsl(var(--border))] px-4 py-2.5 text-sm font-bold text-[hsl(var(--muted-foreground))] hover:bg-[hsl(var(--secondary))]">
+                キャンセル
+              </button>
+              <button type="button" onClick={saveDraft} className="rounded-full bg-[hsl(var(--accent))] px-5 py-2.5 text-sm font-extrabold text-white shadow-[3px_3px_0_hsl(var(--primary))] hover:translate-y-0.5">
+                保存する
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -412,7 +624,7 @@ function Home() {
             </span>
           </div>
           <h1 className="max-w-[780px] text-[clamp(2.5rem,6vw,5.25rem)] font-extrabold leading-[.98] tracking-[-0.075em] text-[hsl(var(--primary))]">
-            迷わず、<span className="text-[hsl(var(--accent))]">運賃</span>を。
+            <span className="text-[hsl(var(--accent))]">運賃</span>
           </h1>
         </section>
 
