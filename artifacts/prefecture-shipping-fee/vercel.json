@@ -1,7 +1,0 @@
-{
-  "framework": null,
-  "buildCommand": "cd ../.. && pnpm --filter @workspace/prefecture-shipping-fee run build",
-  "installCommand": "cd ../.. && pnpm install",
-  "outputDirectory": "dist/public",
-  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
-}
