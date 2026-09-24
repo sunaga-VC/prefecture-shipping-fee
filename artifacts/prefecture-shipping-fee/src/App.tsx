@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import type { Session } from '@supabase/supabase-js';
 import {
   ArrowDown,
   ArrowLeft,
@@ -7,6 +8,8 @@ import {
   CircleHelp,
   ClipboardCheck,
   Eraser,
+  LogIn,
+  LogOut,
   MapPin,
   Pencil,
   Search,
@@ -15,6 +18,7 @@ import {
   X,
 } from 'lucide-react';
 import { ErrorBoundary } from '@/components/error-boundary';
+import { supabase } from '@/lib/supabase';
 import {
   calculateRoute,
   INITIAL_FEE_MATRIX,
@@ -293,38 +297,54 @@ function formatFee(fee: Fee) {
 function FeeMasterPanel({
   feeMatrix,
   history,
+  isAuthenticated,
   onUpdateFee,
+  onRequestLogin,
 }: {
   feeMatrix: FeeMatrix;
   history: FeeChange[];
-  onUpdateFee: (departure: Region, arrival: Region, fee: Fee) => void;
+  isAuthenticated: boolean;
+  onUpdateFee: (departure: Region, arrival: Region, fee: Fee) => Promise<void>;
+  onRequestLogin: () => void;
 }) {
   const [editing, setEditing] = useState<{ departure: Region; arrival: Region } | null>(null);
   const [draftFee, setDraftFee] = useState('');
   const [validationMessage, setValidationMessage] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
 
   const openEditor = (departure: Region, arrival: Region) => {
+    if (!isAuthenticated) {
+      onRequestLogin();
+      return;
+    }
     const fee = feeMatrix[departure][arrival];
     setEditing({ departure, arrival });
     setDraftFee(fee === null ? '' : String(fee));
     setValidationMessage('');
   };
 
-  const saveDraft = () => {
+  const saveDraft = async () => {
     if (!editing) return;
     const normalized = draftFee.trim();
     if (normalized !== '' && !/^\d+$/.test(normalized)) {
       setValidationMessage('0以上の整数、または空欄で入力してください。');
       return;
     }
-    onUpdateFee(
-      editing.departure,
-      editing.arrival,
-      normalized === '' ? null : Number(normalized),
-    );
-    setEditing(null);
-    setDraftFee('');
-    setValidationMessage('');
+    setIsSaving(true);
+    try {
+      await onUpdateFee(
+        editing.departure,
+        editing.arrival,
+        normalized === '' ? null : Number(normalized),
+      );
+      setEditing(null);
+      setDraftFee('');
+      setValidationMessage('');
+    } catch {
+      setValidationMessage('保存に失敗しました。時間をおいて再度お試しください。');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -354,7 +374,7 @@ function FeeMasterPanel({
               <h2 className="mt-2 text-xl font-extrabold tracking-tight">出発地域 × 到着地域</h2>
             </div>
             <span className="rounded-full bg-[hsl(var(--secondary))] px-3 py-1.5 text-xs font-bold text-[hsl(var(--muted-foreground))]">
-              クリックして編集
+              {isAuthenticated ? 'クリックして編集' : '編集にはログインが必要です'}
             </span>
           </div>
 
@@ -436,6 +456,7 @@ function FeeMasterPanel({
                   </p>
                   <p className="mt-1 font-mono text-[10px] text-[hsl(var(--primary-foreground)/.48)]">
                     {new Date(change.changedAt).toLocaleString('ja-JP')}
+                    {change.changedByEmail ? ` / ${change.changedByEmail}` : ''}
                   </p>
                 </div>
               ))}
@@ -482,11 +503,11 @@ function FeeMasterPanel({
             </div>
             {validationMessage && <p className="mt-2 text-xs font-bold text-red-600">{validationMessage}</p>}
             <div className="mt-7 flex justify-end gap-2">
-              <button type="button" onClick={() => setEditing(null)} className="rounded-full border border-[hsl(var(--border))] px-4 py-2.5 text-sm font-bold text-[hsl(var(--muted-foreground))] hover:bg-[hsl(var(--secondary))]">
+              <button type="button" onClick={() => setEditing(null)} disabled={isSaving} className="rounded-full border border-[hsl(var(--border))] px-4 py-2.5 text-sm font-bold text-[hsl(var(--muted-foreground))] hover:bg-[hsl(var(--secondary))] disabled:opacity-50">
                 キャンセル
               </button>
-              <button type="button" onClick={saveDraft} className="rounded-full bg-[hsl(var(--accent))] px-5 py-2.5 text-sm font-extrabold text-white shadow-[3px_3px_0_hsl(var(--primary))] hover:translate-y-0.5">
-                保存する
+              <button type="button" onClick={saveDraft} disabled={isSaving} className="rounded-full bg-[hsl(var(--accent))] px-5 py-2.5 text-sm font-extrabold text-white shadow-[3px_3px_0_hsl(var(--primary))] hover:translate-y-0.5 disabled:opacity-50">
+                {isSaving ? '保存中…' : '保存する'}
               </button>
             </div>
           </div>
@@ -496,79 +517,180 @@ function FeeMasterPanel({
   );
 }
 
-function loadFeeMatrix(): FeeMatrix {
-  try {
-    const saved = window.localStorage.getItem('prefecture-fee-matrix');
-    const parsed = saved ? (JSON.parse(saved) as Partial<FeeMatrix>) : {};
+type ShippingFeeRow = {
+  departure_region: Region;
+  arrival_region: Region;
+  fee: Fee;
+};
 
-    return REGIONS.reduce(
-      (matrix, departure) => ({
-        ...matrix,
-        [departure]: REGIONS.reduce(
-          (row, arrival) => ({
-            ...row,
-            [arrival]:
-              parsed[departure]?.[arrival] === null ||
-              typeof parsed[departure]?.[arrival] === 'number'
-                ? parsed[departure][arrival]
-                : INITIAL_FEE_MATRIX[departure][arrival],
-          }),
-          {} as Record<Region, Fee>,
-        ),
-      }),
-      {} as FeeMatrix,
-    );
-  } catch {
-    return INITIAL_FEE_MATRIX;
-  }
+type FeeChangeHistoryRow = {
+  id: string;
+  departure_region: Region;
+  arrival_region: Region;
+  previous_fee: Fee;
+  next_fee: Fee;
+  changed_at: string;
+  changed_by_email: string | null;
+};
+
+function feeMatrixFromRows(rows: ShippingFeeRow[]): FeeMatrix {
+  return REGIONS.reduce((matrix, departure) => {
+    matrix[departure] = REGIONS.reduce((row, arrival) => {
+      const match = rows.find(
+        (candidate) =>
+          candidate.departure_region === departure && candidate.arrival_region === arrival,
+      );
+      row[arrival] = match ? match.fee : INITIAL_FEE_MATRIX[departure][arrival];
+      return row;
+    }, {} as Record<Region, Fee>);
+    return matrix;
+  }, {} as FeeMatrix);
+}
+
+function feeHistoryFromRows(rows: FeeChangeHistoryRow[]): FeeChange[] {
+  return rows.map((row) => ({
+    id: row.id,
+    departure: row.departure_region,
+    arrival: row.arrival_region,
+    previousFee: row.previous_fee,
+    nextFee: row.next_fee,
+    changedAt: row.changed_at,
+    changedByEmail: row.changed_by_email,
+  }));
+}
+
+function LoginForm({ onClose }: { onClose: () => void }) {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [errorMessage, setErrorMessage] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleSubmit = async (event: FormEvent) => {
+    event.preventDefault();
+    setIsSubmitting(true);
+    setErrorMessage('');
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    setIsSubmitting(false);
+    if (error) {
+      setErrorMessage('メールアドレスまたはパスワードが正しくありません。');
+      return;
+    }
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[hsl(220_34%_17%/.45)] p-5 backdrop-blur-sm">
+      <div className="w-full max-w-sm rounded-[1.15rem] border border-[hsl(var(--card-border))] bg-[hsl(var(--card))] p-6 shadow-[0_24px_70px_hsl(220_34%_17%/.24)]">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="font-mono text-[10px] font-medium uppercase tracking-[0.18em] text-[hsl(var(--accent))]">
+              Sign in
+            </p>
+            <h2 className="mt-2 text-xl font-extrabold">ログイン</h2>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-full p-2 text-[hsl(var(--muted-foreground))] hover:bg-[hsl(var(--secondary))]">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        <form onSubmit={handleSubmit} className="mt-6 space-y-4">
+          <div>
+            <label className="block text-sm font-bold" htmlFor="login-email">
+              メールアドレス
+            </label>
+            <input
+              id="login-email"
+              type="email"
+              required
+              autoComplete="email"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              className="mt-2 w-full rounded-lg border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-4 py-3 text-sm font-semibold outline-none focus:border-[hsl(var(--accent))]"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-bold" htmlFor="login-password">
+              パスワード
+            </label>
+            <input
+              id="login-password"
+              type="password"
+              required
+              autoComplete="current-password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              className="mt-2 w-full rounded-lg border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-4 py-3 text-sm font-semibold outline-none focus:border-[hsl(var(--accent))]"
+            />
+          </div>
+          {errorMessage && <p className="text-xs font-bold text-red-600">{errorMessage}</p>}
+          <button
+            type="submit"
+            disabled={isSubmitting}
+            className="w-full rounded-full bg-[hsl(var(--accent))] px-5 py-2.5 text-sm font-extrabold text-white shadow-[3px_3px_0_hsl(var(--primary))] hover:translate-y-0.5 disabled:opacity-50"
+          >
+            {isSubmitting ? 'ログイン中…' : 'ログイン'}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
 }
 
 function Home() {
   const [view, setView] = useState<'calculator' | 'master'>('calculator');
-  const [feeMatrix, setFeeMatrix] = useState<FeeMatrix>(loadFeeMatrix);
-  const [feeHistory, setFeeHistory] = useState<FeeChange[]>(() => {
-    try {
-      const saved = window.localStorage.getItem('prefecture-fee-history');
-      return saved ? (JSON.parse(saved) as FeeChange[]) : [];
-    } catch {
-      return [];
-    }
-  });
+  const [feeMatrix, setFeeMatrix] = useState<FeeMatrix>(INITIAL_FEE_MATRIX);
+  const [feeHistory, setFeeHistory] = useState<FeeChange[]>([]);
+  const [session, setSession] = useState<Session | null>(null);
+  const [isLoginOpen, setIsLoginOpen] = useState(false);
   const [departure, setDeparture] = useState<Prefecture | null>(null);
   const [arrival, setArrival] = useState<Prefecture | null>(null);
   const [departureQuery, setDepartureQuery] = useState('');
   const [arrivalQuery, setArrivalQuery] = useState('');
 
   useEffect(() => {
-    window.localStorage.setItem('prefecture-fee-matrix', JSON.stringify(feeMatrix));
-  }, [feeMatrix]);
+    supabase.auth.getSession().then(({ data }) => setSession(data.session));
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession);
+    });
+    return () => listener.subscription.unsubscribe();
+  }, []);
+
+  const refreshFeeData = async () => {
+    const [feesResult, historyResult] = await Promise.all([
+      supabase.from('shipping_fees').select('departure_region, arrival_region, fee'),
+      supabase
+        .from('fee_change_history')
+        .select('id, departure_region, arrival_region, previous_fee, next_fee, changed_at, changed_by_email')
+        .order('changed_at', { ascending: false })
+        .limit(50),
+    ]);
+    if (feesResult.data) setFeeMatrix(feeMatrixFromRows(feesResult.data as ShippingFeeRow[]));
+    if (historyResult.data) setFeeHistory(feeHistoryFromRows(historyResult.data as FeeChangeHistoryRow[]));
+  };
 
   useEffect(() => {
-    window.localStorage.setItem('prefecture-fee-history', JSON.stringify(feeHistory));
-  }, [feeHistory]);
+    refreshFeeData();
+  }, []);
 
-  const updateFee = (departureRegion: Region, arrivalRegion: Region, nextFee: Fee) => {
+  const updateFee = async (departureRegion: Region, arrivalRegion: Region, nextFee: Fee) => {
     const previousFee = feeMatrix[departureRegion][arrivalRegion];
     if (previousFee === nextFee) return;
 
-    setFeeMatrix((current) => ({
-      ...current,
-      [departureRegion]: {
-        ...current[departureRegion],
-        [arrivalRegion]: nextFee,
-      },
-    }));
-    setFeeHistory((current) => [
-      {
-        id: `${Date.now()}-${departureRegion}-${arrivalRegion}`,
-        departure: departureRegion,
-        arrival: arrivalRegion,
-        previousFee,
-        nextFee,
-        changedAt: new Date().toISOString(),
-      },
-      ...current,
-    ]);
+    const { error: updateError } = await supabase
+      .from('shipping_fees')
+      .update({ fee: nextFee, updated_at: new Date().toISOString() })
+      .eq('departure_region', departureRegion)
+      .eq('arrival_region', arrivalRegion);
+    if (updateError) throw updateError;
+
+    const { error: historyError } = await supabase.from('fee_change_history').insert({
+      departure_region: departureRegion,
+      arrival_region: arrivalRegion,
+      previous_fee: previousFee,
+      next_fee: nextFee,
+    });
+    if (historyError) throw historyError;
+
+    await refreshFeeData();
   };
 
   const clearRoute = () => {
@@ -615,16 +737,40 @@ function Home() {
                 </>
               )}
             </button>
+            {session ? (
+              <button
+                type="button"
+                onClick={() => supabase.auth.signOut()}
+                className="flex items-center gap-1.5 rounded-full border border-[hsl(var(--border))] px-3 py-2 text-xs font-bold transition-colors hover:border-[hsl(var(--accent))] hover:text-[hsl(var(--accent))]"
+              >
+                <LogOut className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">{session.user.email} /</span>
+                ログアウト
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setIsLoginOpen(true)}
+                className="flex items-center gap-1.5 rounded-full border border-[hsl(var(--border))] px-3 py-2 text-xs font-bold transition-colors hover:border-[hsl(var(--accent))] hover:text-[hsl(var(--accent))]"
+              >
+                <LogIn className="h-3.5 w-3.5" />
+                ログイン
+              </button>
+            )}
           </div>
         </div>
       </header>
+
+      {isLoginOpen && <LoginForm onClose={() => setIsLoginOpen(false)} />}
 
       <div className="mx-auto max-w-[1240px] px-5 pb-12 pt-10 sm:px-8 sm:pt-14 lg:px-10 lg:pt-16">
         {view === 'master' ? (
           <FeeMasterPanel
             feeMatrix={feeMatrix}
             history={feeHistory}
+            isAuthenticated={session !== null}
             onUpdateFee={updateFee}
+            onRequestLogin={() => setIsLoginOpen(true)}
           />
         ) : (
           <>

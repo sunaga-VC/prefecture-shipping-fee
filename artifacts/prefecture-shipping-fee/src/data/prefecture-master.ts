@@ -64,6 +64,7 @@ export type FeeChange = {
   previousFee: Fee;
   nextFee: Fee;
   changedAt: string;
+  changedByEmail: string | null;
 };
 
 export const INITIAL_FEE_MATRIX: FeeMatrix = {
